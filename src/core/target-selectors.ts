@@ -1,10 +1,13 @@
 import path from "node:path";
+import { readdir } from "node:fs/promises";
 import type { AgentAdapter, SyncCommand, TargetSpec } from "../types.js";
 import { exists } from "../utils/fs.js";
 import { getLocalTargetBase, getRemoteTargetBase } from "./layout.js";
 import {
+  extractStructuredSubtree,
   isStructuredConfigTarget,
   parseJsonPathRule,
+  prefixJsonPath,
   readStructuredFile,
   resolveTargetFormat,
 } from "./structured-config.js";
@@ -23,6 +26,18 @@ function pushSelection(result: Record<string, string[]>, targetId: string, expre
     existing.push(expression);
   }
   result[targetId] = existing;
+}
+
+function normalizeCliSelector(target: TargetSpec, expression: string): string {
+  if (!target.structuredRootPath) {
+    return expression;
+  }
+
+  if (expression.startsWith(target.structuredRootPath)) {
+    return expression;
+  }
+
+  return prefixJsonPath(target.structuredRootPath, expression);
 }
 
 export function parseCliJsonPathSelections(
@@ -47,7 +62,7 @@ export function parseCliJsonPathSelections(
       );
     }
 
-    pushSelection(result, parsed.targetId, parsed.expression);
+    pushSelection(result, parsed.targetId, normalizeCliSelector(target, parsed.expression));
   }
 
   return result;
@@ -86,9 +101,18 @@ function resolveSourceForTarget(
   return { path: localPath, sourceKind: "local" };
 }
 
+async function listOneDepthChildren(dirPath: string): Promise<string[]> {
+  const entries = await readdir(dirPath, { withFileTypes: true });
+  return entries
+    .filter((entry) => !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export interface InteractiveSelectionResult {
   selectedTargets: TargetSpec[];
   jsonPathSelectionsByTarget: Record<string, string[]>;
+  subpathSelectionsByTarget: Record<string, string[]>;
 }
 
 export async function promptInteractiveCombinedSelection(
@@ -116,21 +140,35 @@ export async function promptInteractiveCombinedSelection(
     let rootValue: unknown = undefined;
     if (target.kind === "file" && isStructuredConfigTarget(target) && await exists(sourcePath)) {
       const format = resolveTargetFormat(target, sourcePath);
-      rootValue = await readStructuredFile(sourcePath, format);
+      const parsed = await readStructuredFile(sourcePath, format);
+      rootValue = target.structuredRootPath
+        ? extractStructuredSubtree(parsed, target.structuredRootPath)
+        : parsed;
     }
 
-    inputs.push({
+    let subpathChildren: string[] = [];
+    if (target.kind === "dir" && target.category === "skills" && await exists(sourcePath)) {
+      subpathChildren = await listOneDepthChildren(sourcePath);
+    }
+
+    const treeInput: CombinedTreeTargetInput = {
       targetId: target.id,
       label: target.label,
       description: `${target.description} (${path.basename(sourcePath)})`,
       sourceKind,
       sourcePath,
       rootValue,
-    });
+      subpathChildren,
+      defaultSelected: target.includeByDefault ?? !target.sensitive,
+      ...(target.structuredSelectionDepth !== undefined
+        ? { jsonDepthLimit: target.structuredSelectionDepth }
+        : {}),
+    };
+    inputs.push(treeInput);
   }
 
   const selection = await promptCombinedTargetAndJsonTreeSelection(
-    `? ${adapter.displayName}에서 동기화할 설정 항목을 선택하세요.`,
+    `? ${adapter.displayName}에서 동기화할 설정 항목을 선택하세요. (↑/↓ 이동, Space 선택, Enter 확정)`,
     inputs
   );
 
@@ -143,9 +181,22 @@ export async function promptInteractiveCombinedSelection(
     }
   }
 
+  const normalizedJsonPathSelections: Record<string, string[]> = {};
+  for (const [targetId, expressions] of Object.entries(selection.jsonPathSelectionsByTarget)) {
+    const target = byId.get(targetId);
+    if (!target) {
+      continue;
+    }
+
+    for (const expression of expressions) {
+      pushSelection(normalizedJsonPathSelections, targetId, normalizeCliSelector(target, expression));
+    }
+  }
+
   return {
     selectedTargets,
-    jsonPathSelectionsByTarget: selection.jsonPathSelectionsByTarget,
+    jsonPathSelectionsByTarget: normalizedJsonPathSelections,
+    subpathSelectionsByTarget: selection.subpathSelectionsByTarget,
   };
 }
 

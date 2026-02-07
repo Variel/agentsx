@@ -33,6 +33,9 @@ export interface TargetSpec {
   includeByDefault?: boolean;
   structured?: boolean;
   format?: ConfigFormat;
+  structuredRootPath?: string;
+  structuredSelectionDepth?: number;
+  allowConflictSubSelection?: boolean;
 }
 
 export interface AgentAdapter {

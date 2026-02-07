@@ -32,9 +32,7 @@ export async function runSyncCommand(
 
   const remoteStatus = prepareRemoteBranch(remote.mirrorPath, remote.defaultBranch);
   if (remoteStatus === "initialized") {
-    console.log(
-      `원격 브랜치 origin/${remote.defaultBranch}가 없어 자동 초기화했습니다.`
-    );
+    console.log(`원격 브랜치 origin/${remote.defaultBranch}가 없어 자동 초기화했습니다.`);
   }
 
   const requestedTargets = targetIds.map((item) => item.trim()).filter(Boolean);
@@ -42,6 +40,7 @@ export async function runSyncCommand(
   let selectedTargets = [] as typeof adapter.targets;
   let interactiveTargets = false;
   let interactiveJsonPathSelections: Record<string, string[]> = {};
+  let subpathSelectionsByTarget: Record<string, string[]> = {};
 
   if (requestedTargets.length === 0) {
     const interactiveSelection = await promptInteractiveCombinedSelection(
@@ -54,6 +53,7 @@ export async function runSyncCommand(
     selectedTargets = interactiveSelection.selectedTargets;
     interactiveTargets = true;
     interactiveJsonPathSelections = interactiveSelection.jsonPathSelectionsByTarget;
+    subpathSelectionsByTarget = interactiveSelection.subpathSelectionsByTarget;
   } else {
     const selection = await selectTargets(adapter, requestedTargets);
     selectedTargets = selection.targets;
@@ -72,10 +72,17 @@ export async function runSyncCommand(
 
   const selectionFingerprint = selectedTargets.map((target) => {
     const selectors = jsonPathSelectionsByTarget[target.id];
-    if (!selectors || selectors.length === 0) {
-      return `${target.id}:*`;
+    const subpaths = subpathSelectionsByTarget[target.id];
+
+    const parts: string[] = [];
+    if (selectors && selectors.length > 0) {
+      parts.push(`jp=${selectors.slice().sort().join("&")}`);
     }
-    return `${target.id}:${selectors.slice().sort().join("&")}`;
+    if (subpaths && subpaths.length > 0) {
+      parts.push(`sp=${subpaths.slice().sort().join("&")}`);
+    }
+
+    return `${target.id}:${parts.length > 0 ? parts.join("|") : "*"}`;
   });
   const conflictKey = conflictDefaultKey(command, adapter.key, selectionFingerprint);
 
@@ -90,6 +97,7 @@ export async function runSyncCommand(
     interactiveTargets,
     explicitPolicy: conflictPolicy,
     jsonPathSelectionsByTarget,
+    subpathSelectionsByTarget,
   });
 
   state.lastSyncAtByAgent[adapter.key] = new Date().toISOString();
@@ -113,6 +121,9 @@ export async function runSyncCommand(
     summary.policy ? `충돌정책: ${summary.policy}` : undefined,
     Object.keys(jsonPathSelectionsByTarget).length > 0
       ? `세부선택(jsonpath): ${JSON.stringify(jsonPathSelectionsByTarget)}`
+      : undefined,
+    Object.keys(subpathSelectionsByTarget).length > 0
+      ? `세부선택(subpath): ${JSON.stringify(subpathSelectionsByTarget)}`
       : undefined,
     adapter.references.length > 0 ? `참고 문서: ${adapter.references.join(", ")}` : undefined,
   ].filter(Boolean).join("\n"));

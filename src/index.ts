@@ -127,4 +127,8 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : "알 수 없는 오류";
+  console.error(`오류: ${message}`);
+  process.exitCode = 1;
+});

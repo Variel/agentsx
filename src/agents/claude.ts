@@ -104,6 +104,9 @@ export const claudeAdapter: AgentAdapter = {
       sensitive: true,
       structured: true,
       format: "json",
+      structuredRootPath: "$.mcpServers",
+      structuredSelectionDepth: 1,
+      allowConflictSubSelection: true,
     }
   ]
 };

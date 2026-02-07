@@ -340,6 +340,27 @@ export function parseJsonPathRule(input: string): ParsedJsonPathRule {
   return { targetId, expression };
 }
 
+export function prefixJsonPath(rootPath: string | undefined, childPath: string): string {
+  if (!rootPath || rootPath === "$") {
+    return childPath;
+  }
+  if (childPath === "$") {
+    return rootPath;
+  }
+  if (!childPath.startsWith("$")) {
+    throw new Error(`JSONPath 형식이 잘못되었습니다: ${childPath}`);
+  }
+  return `${rootPath}${childPath.slice(1)}`;
+}
+
+export function extractStructuredSubtree(doc: unknown, selector: string): unknown | undefined {
+  const matches = selectMatches(doc, selector);
+  if (matches.length === 0) {
+    return undefined;
+  }
+  return matches[0]?.value;
+}
+
 export function segmentsToJsonPath(segments: Array<string | number>): string {
   let pathText = "$";
   for (const segment of segments) {

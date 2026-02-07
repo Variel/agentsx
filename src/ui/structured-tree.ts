@@ -8,22 +8,26 @@ export interface CombinedTreeTargetInput {
   sourceKind: "local" | "remote";
   sourcePath: string;
   rootValue: unknown | undefined;
+  subpathChildren: string[];
+  defaultSelected: boolean;
+  jsonDepthLimit?: number;
 }
 
 export interface CombinedTreeSelection {
   selectedTargetIds: string[];
   jsonPathSelectionsByTarget: Record<string, string[]>;
+  subpathSelectionsByTarget: Record<string, string[]>;
 }
 
 interface TreeNode {
   id: string;
   parentId: string | undefined;
   children: string[];
-  kind: "target" | "json";
+  kind: "target" | "json" | "subpath";
   targetId: string;
   label: string;
-  sourceLabel: string | undefined;
   jsonPath: string | undefined;
+  subpath: string | undefined;
   value: unknown;
 }
 
@@ -72,9 +76,10 @@ function childEntries(value: unknown): Array<{ key: string | number; value: unkn
   return [];
 }
 
-function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, TreeNode>; rootId: string } {
+function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, TreeNode>; rootId: string; defaultSelectedNodeIds: string[] } {
   const nodes = new Map<string, TreeNode>();
   let seq = 0;
+  const defaultSelectedNodeIds: string[] = [];
 
   const createNode = (partial: Omit<TreeNode, "id" | "children">): string => {
     const id = `n${seq}`;
@@ -95,9 +100,9 @@ function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, Tree
     parentId: undefined,
     kind: "target",
     targetId: "__root__",
-    label: "동기화 설정 트리",
-    sourceLabel: undefined,
+    label: "root",
     jsonPath: undefined,
+    subpath: undefined,
     value: null,
   });
 
@@ -105,8 +110,14 @@ function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, Tree
     parentId: string,
     targetId: string,
     value: unknown,
-    segments: Array<string | number>
+    segments: Array<string | number>,
+    depth: number,
+    depthLimit: number | undefined
   ): void => {
+    if (depthLimit !== undefined && depth >= depthLimit) {
+      return;
+    }
+
     for (const entry of childEntries(value)) {
       const nextSegments = [...segments, entry.key];
       const nextPath = toJsonPath(nextSegments);
@@ -115,11 +126,11 @@ function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, Tree
         kind: "json",
         targetId,
         label: String(entry.key),
-        sourceLabel: undefined,
         jsonPath: nextPath,
+        subpath: undefined,
         value: entry.value,
       });
-      addJsonChildren(childId, targetId, entry.value, nextSegments);
+      addJsonChildren(childId, targetId, entry.value, nextSegments, depth + 1, depthLimit);
     }
   };
 
@@ -129,10 +140,14 @@ function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, Tree
       kind: "target",
       targetId: input.targetId,
       label: input.label,
-      sourceLabel: `source=${input.sourceKind}`,
       jsonPath: undefined,
-      value: input.description,
+      subpath: undefined,
+      value: `${input.description} / source=${input.sourceKind}`,
     });
+
+    if (input.defaultSelected) {
+      defaultSelectedNodeIds.push(targetNodeId);
+    }
 
     if (input.rootValue !== undefined) {
       const fileNodeId = createNode({
@@ -140,15 +155,34 @@ function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, Tree
         kind: "json",
         targetId: input.targetId,
         label: path.basename(input.sourcePath),
-        sourceLabel: undefined,
         jsonPath: "$",
+        subpath: undefined,
         value: input.rootValue,
       });
-      addJsonChildren(fileNodeId, input.targetId, input.rootValue, []);
+      addJsonChildren(
+        fileNodeId,
+        input.targetId,
+        input.rootValue,
+        [],
+        0,
+        input.jsonDepthLimit
+      );
+    }
+
+    for (const child of input.subpathChildren) {
+      createNode({
+        parentId: targetNodeId,
+        kind: "subpath",
+        targetId: input.targetId,
+        label: child,
+        jsonPath: undefined,
+        subpath: child,
+        value: child,
+      });
     }
   }
 
-  return { nodes, rootId };
+  return { nodes, rootId, defaultSelectedNodeIds };
 }
 
 function visibleRows(
@@ -208,20 +242,24 @@ function selectionState(nodeId: string, nodes: Map<string, TreeNode>, selected: 
     return "none";
   }
 
-  if (node.children.length === 0) {
-    return selected.has(nodeId) ? "all" : "none";
+  if (selected.has(nodeId)) {
+    return "all";
   }
 
-  let all = selected.has(nodeId);
-  let any = selected.has(nodeId);
+  if (node.children.length === 0) {
+    return "none";
+  }
+
+  let any = false;
+  let all = true;
 
   for (const childId of node.children) {
     const child = selectionState(childId, nodes, selected);
-    if (child !== "all") {
-      all = false;
-    }
     if (child !== "none") {
       any = true;
+    }
+    if (child !== "all") {
+      all = false;
     }
   }
 
@@ -245,11 +283,7 @@ function render(
   readline.cursorTo(process.stdout, 0, 0);
   readline.clearScreenDown(process.stdout);
 
-  const lines: string[] = [
-    title,
-    "←/→ 접기/펼치기, ↑/↓ 이동, Space 선택(하위 포함), Enter 확정",
-    "",
-  ];
+  const lines: string[] = [title];
 
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i];
@@ -264,55 +298,88 @@ function render(
 
     const state = selectionState(node.id, nodes, selected);
     const marker = state === "all" ? "◉" : state === "partial" ? "◐" : "◯";
-    const branch = node.children.length > 0 ? (expanded.has(node.id) ? "▾" : "▸") : "·";
+    const branch = node.children.length > 0 ? (expanded.has(node.id) ? "▾" : "▸") : " ";
     const focus = i === focusIndex ? "❯" : " ";
-    const indent = "  ".repeat(row.depth);
+    const indent = " ".repeat(row.depth * 2);
 
-    const detail = node.kind === "json"
-      ? nodeSummary(node.value)
-      : node.sourceLabel ?? "";
+    let detail = "";
+    if (node.kind === "target") {
+      detail = typeof node.value === "string" ? ` - ${node.value}` : "";
+    } else if (node.kind === "json") {
+      detail = `: ${nodeSummary(node.value)}`;
+    }
 
-    lines.push(`${focus}${indent}${branch} ${marker} ${node.label}${detail ? ` ${detail}` : ""}`);
+    lines.push(`${focus}${indent}${branch} ${marker} ${node.label}${detail}`);
   }
 
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
+function canonicalize(nodes: Map<string, TreeNode>, selected: Set<string>): string[] {
+  const list: string[] = [];
+
+  for (const nodeId of selected) {
+    let parentId = nodes.get(nodeId)?.parentId;
+    let hasSelectedAncestor = false;
+
+    while (parentId) {
+      if (selected.has(parentId)) {
+        hasSelectedAncestor = true;
+        break;
+      }
+      parentId = nodes.get(parentId)?.parentId;
+    }
+
+    if (!hasSelectedAncestor) {
+      list.push(nodeId);
+    }
+  }
+
+  return list;
+}
+
 function collectSelection(nodes: Map<string, TreeNode>, selected: Set<string>): CombinedTreeSelection {
   const selectedTargetIds = new Set<string>();
   const jsonPathSelectionsByTarget: Record<string, string[]> = {};
+  const subpathSelectionsByTarget: Record<string, string[]> = {};
 
-  const orderedSelected = [...selected];
-
-  for (const nodeId of orderedSelected) {
+  for (const nodeId of canonicalize(nodes, selected)) {
     const node = nodes.get(nodeId);
     if (!node || node.targetId === "__root__") {
       continue;
     }
 
-    if (node.kind === "target") {
-      selectedTargetIds.add(node.targetId);
-      delete jsonPathSelectionsByTarget[node.targetId];
-      continue;
-    }
+    selectedTargetIds.add(node.targetId);
 
-    if (!selectedTargetIds.has(node.targetId) && node.jsonPath) {
+    if (node.kind === "json" && node.jsonPath) {
       const arr = jsonPathSelectionsByTarget[node.targetId] ?? [];
       if (!arr.includes(node.jsonPath)) {
         arr.push(node.jsonPath);
       }
       jsonPathSelectionsByTarget[node.targetId] = arr;
-      selectedTargetIds.add(node.targetId);
+      continue;
+    }
+
+    if (node.kind === "subpath" && node.subpath) {
+      const arr = subpathSelectionsByTarget[node.targetId] ?? [];
+      if (!arr.includes(node.subpath)) {
+        arr.push(node.subpath);
+      }
+      subpathSelectionsByTarget[node.targetId] = arr;
     }
   }
 
-  for (const [targetId, paths] of Object.entries(jsonPathSelectionsByTarget)) {
-    jsonPathSelectionsByTarget[targetId] = paths.sort();
+  for (const key of Object.keys(jsonPathSelectionsByTarget)) {
+    jsonPathSelectionsByTarget[key] = jsonPathSelectionsByTarget[key]?.sort() ?? [];
+  }
+  for (const key of Object.keys(subpathSelectionsByTarget)) {
+    subpathSelectionsByTarget[key] = subpathSelectionsByTarget[key]?.sort() ?? [];
   }
 
   return {
     selectedTargetIds: [...selectedTargetIds].sort(),
     jsonPathSelectionsByTarget,
+    subpathSelectionsByTarget,
   };
 }
 
@@ -324,14 +391,15 @@ export async function promptCombinedTargetAndJsonTreeSelection(
     return {
       selectedTargetIds: inputs.map((item) => item.targetId),
       jsonPathSelectionsByTarget: {},
+      subpathSelectionsByTarget: {},
     };
   }
 
-  const { nodes, rootId } = buildTree(inputs);
+  const { nodes, rootId, defaultSelectedNodeIds } = buildTree(inputs);
   const expanded = new Set<string>([rootId]);
   let rows = visibleRows(rootId, nodes, expanded).filter((row) => row.id !== rootId);
   let focusIndex = 0;
-  const selected = new Set<string>();
+  const selected = new Set<string>(defaultSelectedNodeIds);
 
   return await new Promise<CombinedTreeSelection>((resolve, reject) => {
     const input = process.stdin;
@@ -405,11 +473,37 @@ export async function promptCombinedTargetAndJsonTreeSelection(
       }
 
       rows = visibleRows(rootId, nodes, expanded).filter((item) => item.id !== rootId);
-      focusIndex = Math.min(focusIndex, rows.length - 1);
+      if (rows.length === 0) {
+        focusIndex = 0;
+      } else {
+        focusIndex = Math.min(focusIndex, rows.length - 1);
+      }
       render(title, rows, focusIndex, nodes, expanded, selected);
     };
 
     render(title, rows, focusIndex, nodes, expanded, selected);
     input.on("keypress", onKeypress);
   });
+}
+
+export async function promptJsonSubtreeDrilldownSelection(
+  title: string,
+  rootValue: unknown
+): Promise<string[]> {
+  const selection = await promptCombinedTargetAndJsonTreeSelection(title, [
+    {
+      targetId: "__drilldown__",
+      label: "충돌 하위 선택",
+      description: "conflict subtree",
+      sourceKind: "local",
+      sourcePath: "subtree.json",
+      rootValue,
+      subpathChildren: [],
+      defaultSelected: false,
+    },
+  ]);
+
+  return (selection.jsonPathSelectionsByTarget["__drilldown__"] ?? [])
+    .filter((item) => item !== "$")
+    .sort();
 }

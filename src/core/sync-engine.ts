@@ -2,6 +2,7 @@ import path from "node:path";
 import type {
   AgentAdapter,
   AgentsxState,
+  ConflictItem,
   ConflictPolicy,
   PerFileDecision,
   PlannedOp,
@@ -17,11 +18,15 @@ import { scanLocalEntries, scanRemoteEntries } from "./scanner.js";
 import { promptConflictPolicy, promptPerFileDecision } from "../ui/prompts.js";
 import {
   applyStructuredSelectionFile,
+  extractStructuredSubtree,
   getSelectorSnapshot,
   isStructuredConfigTarget,
+  prefixJsonPath,
   readStructuredFile,
   resolveTargetFormat,
 } from "./structured-config.js";
+import { promptJsonSubtreeDrilldownSelection } from "../ui/structured-tree.js";
+import { select } from "@inquirer/prompts";
 
 interface SyncEngineOptions {
   command: SyncCommand;
@@ -34,6 +39,7 @@ interface SyncEngineOptions {
   interactiveTargets: boolean;
   explicitPolicy: ConflictPolicy | undefined;
   jsonPathSelectionsByTarget: Record<string, string[]>;
+  subpathSelectionsByTarget: Record<string, string[]>;
 }
 
 interface ExecutionSummary {
@@ -67,6 +73,23 @@ function opToDecision(
   return "skip";
 }
 
+function actionToDecision(
+  command: SyncCommand,
+  action: PlannedOp["action"] | "skip"
+): PerFileDecision | undefined {
+  if (action === "skip") {
+    return "skip";
+  }
+
+  if (command === "push") {
+    return action === "copy-local-to-remote" ? "use-source" : undefined;
+  }
+  if (command === "pull") {
+    return action === "copy-remote-to-local" ? "use-source" : undefined;
+  }
+  return action === "copy-local-to-remote" ? "use-local" : "use-remote";
+}
+
 function resolvePathForTarget(base: string, target: TargetSpec, relPath: string): string {
   if (target.kind === "file") {
     return base;
@@ -88,6 +111,39 @@ function sideEntryKey(entry: SideEntry): string {
 
 function dedupeSelectors(input: string[]): string[] {
   return [...new Set(input.map((item) => item.trim()).filter(Boolean))];
+}
+
+function normalizeRel(input: string): string {
+  return input.replace(/\\/g, "/");
+}
+
+function isMatchedSubpath(relPath: string, subpath: string): boolean {
+  const normalizedRel = normalizeRel(relPath);
+  const normalizedSub = normalizeRel(subpath).replace(/\/+$/, "");
+  if (!normalizedSub) {
+    return true;
+  }
+  return normalizedRel === normalizedSub || normalizedRel.startsWith(`${normalizedSub}/`);
+}
+
+function filterEntriesBySubpaths(
+  entries: SideEntry[],
+  targetById: Map<string, TargetSpec>,
+  selections: Record<string, string[]>
+): SideEntry[] {
+  return entries.filter((entry) => {
+    const target = targetById.get(entry.targetId);
+    if (!target || target.kind !== "dir") {
+      return true;
+    }
+
+    const subpaths = selections[target.id];
+    if (!subpaths || subpaths.length === 0) {
+      return true;
+    }
+
+    return subpaths.some((subpath) => isMatchedSubpath(entry.relPath, subpath));
+  });
 }
 
 async function buildSelectorEntries(
@@ -238,8 +294,16 @@ async function expandEntriesByStructuredSelectors(
 export async function executeSyncEngine(options: SyncEngineOptions): Promise<ExecutionSummary> {
   const targetById = createTargetMap(options.targets);
 
-  const scannedLocalEntries = await scanLocalEntries(options.cwd, options.targets);
-  const scannedRemoteEntries = await scanRemoteEntries(options.mirrorPath, options.adapter, options.targets);
+  const scannedLocalEntries = filterEntriesBySubpaths(
+    await scanLocalEntries(options.cwd, options.targets),
+    targetById,
+    options.subpathSelectionsByTarget
+  );
+  const scannedRemoteEntries = filterEntriesBySubpaths(
+    await scanRemoteEntries(options.mirrorPath, options.adapter, options.targets),
+    targetById,
+    options.subpathSelectionsByTarget
+  );
 
   const expanded = await expandEntriesByStructuredSelectors(
     options,
@@ -259,6 +323,8 @@ export async function executeSyncEngine(options: SyncEngineOptions): Promise<Exe
   let selectedPolicy: ConflictPolicy | undefined;
   let ops: PlannedOp[] = [];
   let conflicts = 0;
+  let preAppliedLocalToRemote = 0;
+  let preAppliedRemoteToLocal = 0;
 
   if (!options.interactiveTargets) {
     selectedPolicy =
@@ -283,12 +349,69 @@ export async function executeSyncEngine(options: SyncEngineOptions): Promise<Exe
     ops = [...filtered];
 
     for (const conflict of planned.conflicts) {
-      const remembered = getRememberedDecision(options.state, options.conflictStateKey, conflict.key);
-      const decision = remembered ?? (await promptPerFileDecision(options.command, conflict));
-      rememberConflictDecision(options.state, options.conflictStateKey, conflict.key, decision);
+      const target = targetById.get(conflict.targetId);
+      if (!target) {
+        continue;
+      }
 
-      const action = opToDecision(options.command, decision);
-      if (action === "skip") {
+      const remembered = getRememberedDecision(options.state, options.conflictStateKey, conflict.key);
+
+      if (remembered) {
+        const action = opToDecision(options.command, remembered);
+        if (action === "skip") {
+          ops.push({
+            key: conflict.key,
+            targetId: conflict.targetId,
+            relPath: conflict.relPath,
+            selector: conflict.selector,
+            action: "skip",
+            reason: "conflict-skip",
+          });
+        } else {
+          ops.push({
+            key: conflict.key,
+            targetId: conflict.targetId,
+            relPath: conflict.relPath,
+            selector: conflict.selector,
+            action,
+            reason: "overwrite",
+          });
+        }
+        continue;
+      }
+
+      const localBase = getLocalTargetBase(target, options.cwd);
+      const remoteBase = getRemoteTargetBase(options.mirrorPath, options.adapter, target);
+      const localDestPath = resolvePathForTarget(localBase, target, conflict.relPath);
+      const remoteDestPath = resolvePathForTarget(remoteBase, target, conflict.relPath);
+      const localSourcePath = localByKey.get(conflict.key)?.snapshot.absPath;
+      const remoteSourcePath = remoteByKey.get(conflict.key)?.snapshot.absPath;
+
+      const resolved = await resolveConflictWithOptionalDrilldown({
+        command: options.command,
+        conflict,
+        target,
+        localSourcePath,
+        remoteSourcePath,
+        localDestPath,
+        remoteDestPath,
+      });
+
+      if (resolved.drilldownApplied) {
+        if (resolved.drilldownDirection === "local-to-remote") {
+          preAppliedLocalToRemote += 1;
+        } else if (resolved.drilldownDirection === "remote-to-local") {
+          preAppliedRemoteToLocal += 1;
+        }
+        continue;
+      }
+
+      const decisionFromAction = actionToDecision(options.command, resolved.action);
+      if (decisionFromAction) {
+        rememberConflictDecision(options.state, options.conflictStateKey, conflict.key, decisionFromAction);
+      }
+
+      if (resolved.action === "skip") {
         ops.push({
           key: conflict.key,
           targetId: conflict.targetId,
@@ -303,15 +426,15 @@ export async function executeSyncEngine(options: SyncEngineOptions): Promise<Exe
           targetId: conflict.targetId,
           relPath: conflict.relPath,
           selector: conflict.selector,
-          action,
+          action: resolved.action,
           reason: "overwrite",
         });
       }
     }
   }
 
-  let copiedLocalToRemote = 0;
-  let copiedRemoteToLocal = 0;
+  let copiedLocalToRemote = preAppliedLocalToRemote;
+  let copiedRemoteToLocal = preAppliedRemoteToLocal;
   let skipped = 0;
 
   for (const op of ops) {
@@ -389,5 +512,129 @@ export async function executeSyncEngine(options: SyncEngineOptions): Promise<Exe
     skipped,
     conflicts,
     policy: selectedPolicy,
+  };
+}
+
+async function resolveConflictWithOptionalDrilldown(params: {
+  command: SyncCommand;
+  conflict: ConflictItem;
+  target: TargetSpec;
+  localSourcePath: string | undefined;
+  remoteSourcePath: string | undefined;
+  localDestPath: string;
+  remoteDestPath: string;
+}): Promise<{
+  action: PlannedOp["action"] | "skip";
+  drilldownApplied: boolean;
+  drilldownDirection: "local-to-remote" | "remote-to-local" | undefined;
+}> {
+  const { command, conflict, target } = params;
+
+  const allowDrilldown =
+    target.allowConflictSubSelection === true &&
+    target.kind === "file" &&
+    isStructuredConfigTarget(target) &&
+    typeof conflict.selector === "string";
+
+  if (!allowDrilldown) {
+    const decision = await promptPerFileDecision(command, conflict);
+    return {
+      action: opToDecision(command, decision),
+      drilldownApplied: false,
+      drilldownDirection: undefined,
+    };
+  }
+
+  const choice = await select<
+    "default-local" | "default-remote" | "skip" | "drilldown-local" | "drilldown-remote"
+  >({
+    message: `충돌: ${conflict.relPath} (MCP 하위 선택 가능)`,
+    choices: command === "sync"
+      ? [
+        { name: "로컬 버전 사용(항목 전체)", value: "default-local" },
+        { name: "원격 버전 사용(항목 전체)", value: "default-remote" },
+        { name: "원격 하위 경로 선택", value: "drilldown-remote" },
+        { name: "로컬 하위 경로 선택", value: "drilldown-local" },
+        { name: "건너뛰기", value: "skip" },
+      ]
+      : [
+        { name: "항목 전체 덮어쓰기", value: "default-local" },
+        {
+          name: command === "push" ? "로컬 하위 경로 선택" : "원격 하위 경로 선택",
+          value: command === "push" ? "drilldown-local" : "drilldown-remote",
+        },
+        { name: "건너뛰기", value: "skip" },
+      ],
+  });
+
+  if (choice === "skip") {
+    return {
+      action: "skip",
+      drilldownApplied: false,
+      drilldownDirection: undefined,
+    };
+  }
+
+  if (choice === "default-local" || choice === "default-remote") {
+    if (command === "push") {
+      return { action: "copy-local-to-remote", drilldownApplied: false, drilldownDirection: undefined };
+    }
+    if (command === "pull") {
+      return { action: "copy-remote-to-local", drilldownApplied: false, drilldownDirection: undefined };
+    }
+    return {
+      action: choice === "default-local" ? "copy-local-to-remote" : "copy-remote-to-local",
+      drilldownApplied: false,
+      drilldownDirection: undefined,
+    };
+  }
+
+  const sourcePath = choice === "drilldown-local" ? params.localSourcePath : params.remoteSourcePath;
+  const destPath = choice === "drilldown-local" ? params.remoteDestPath : params.localDestPath;
+  if (!sourcePath || !conflict.selector) {
+    return {
+      action: "skip",
+      drilldownApplied: false,
+      drilldownDirection: undefined,
+    };
+  }
+
+  const format = resolveTargetFormat(target, sourcePath);
+  const sourceDoc = await readStructuredFile(sourcePath, format);
+  const subtree = extractStructuredSubtree(sourceDoc, conflict.selector);
+  if (subtree === undefined) {
+    return {
+      action: "skip",
+      drilldownApplied: false,
+      drilldownDirection: undefined,
+    };
+  }
+
+  const relativePaths = await promptJsonSubtreeDrilldownSelection(
+    `충돌 하위 선택: ${conflict.selector}`,
+    subtree
+  );
+  if (relativePaths.length === 0) {
+    return {
+      action: "skip",
+      drilldownApplied: false,
+      drilldownDirection: undefined,
+    };
+  }
+
+  const absolute = relativePaths.map((item) => prefixJsonPath(conflict.selector, item));
+  const result = await applyStructuredSelectionFile(sourcePath, destPath, target, absolute);
+  if (result.applied === 0) {
+    return {
+      action: "skip",
+      drilldownApplied: false,
+      drilldownDirection: undefined,
+    };
+  }
+
+  return {
+    action: "skip",
+    drilldownApplied: true,
+    drilldownDirection: choice === "drilldown-local" ? "local-to-remote" : "remote-to-local",
   };
 }

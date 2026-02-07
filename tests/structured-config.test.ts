@@ -123,4 +123,24 @@ describe("cli jsonpath rules", () => {
     expect(() => parseCliJsonPathSelections(targets, ["skills=$.a"]))
       .toThrowError("구조화 설정 파일이 아닙니다");
   });
+
+  it("structuredRootPath가 있으면 jsonpath를 해당 루트로 정규화", () => {
+    const targets: TargetSpec[] = [
+      {
+        id: "mcp",
+        label: "MCP",
+        description: "mcp",
+        category: "mcp",
+        kind: "file",
+        scope: "home",
+        path: ".claude.json",
+        structured: true,
+        format: "json",
+        structuredRootPath: "$.mcpServers",
+      },
+    ];
+
+    const selection = parseCliJsonPathSelections(targets, ["mcp=$.context7"]);
+    expect(selection.mcp).toEqual(["$.mcpServers.context7"]);
+  });
 });
