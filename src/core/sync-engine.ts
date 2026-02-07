@@ -18,6 +18,7 @@ import { scanLocalEntries, scanRemoteEntries } from "./scanner.js";
 import { promptConflictPolicy, promptPerFileDecision } from "../ui/prompts.js";
 import {
   applyStructuredSelectionFile,
+  copyStructuredFileNormalized,
   extractStructuredSubtree,
   getSelectorSnapshot,
   isStructuredConfigTarget,
@@ -468,6 +469,8 @@ export async function executeSyncEngine(options: SyncEngineOptions): Promise<Exe
           skipped += 1;
           continue;
         }
+      } else if (isStructuredConfigTarget(target)) {
+        await copyStructuredFileNormalized(source, remoteDest, target);
       } else {
         await copySingleFile(source, remoteDest);
       }
@@ -495,6 +498,8 @@ export async function executeSyncEngine(options: SyncEngineOptions): Promise<Exe
           skipped += 1;
           continue;
         }
+      } else if (isStructuredConfigTarget(target)) {
+        await copyStructuredFileNormalized(source, localDest, target);
       } else {
         await copySingleFile(source, localDest);
       }

@@ -3,11 +3,16 @@ import type { AgentAdapter, FileSnapshot, SideEntry, TargetSpec } from "../types
 import { exists, listFilesRecursive, statFile } from "../utils/fs.js";
 import { hashFile } from "../utils/hash.js";
 import { getLocalTargetBase, getRemoteTargetBase } from "./layout.js";
+import { hashStructuredFile, isStructuredConfigTarget, resolveTargetFormat } from "./structured-config.js";
 
-async function toSnapshot(absPath: string, mtimeMs: number): Promise<FileSnapshot> {
+async function toSnapshot(absPath: string, mtimeMs: number, target: TargetSpec): Promise<FileSnapshot> {
+  const hash = target.kind === "file" && isStructuredConfigTarget(target)
+    ? await hashStructuredFile(absPath, resolveTargetFormat(target, absPath))
+    : await hashFile(absPath);
+
   return {
     absPath,
-    hash: await hashFile(absPath),
+    hash,
     mtimeMs,
   };
 }
@@ -32,7 +37,7 @@ export async function scanTargetSide(
         targetId,
         relPath: path.basename(basePath),
         selector: undefined,
-        snapshot: await toSnapshot(basePath, fileStat.mtimeMs),
+        snapshot: await toSnapshot(basePath, fileStat.mtimeMs, target),
       },
     ];
   }
@@ -44,7 +49,7 @@ export async function scanTargetSide(
       targetId,
       relPath: file.relPath,
       selector: undefined,
-      snapshot: await toSnapshot(file.absPath, file.mtimeMs),
+      snapshot: await toSnapshot(file.absPath, file.mtimeMs, target),
     });
   }
 

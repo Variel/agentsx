@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { JSONPath } from "jsonpath-plus";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parse as parseToml, stringify as stringifyToml } from "@iarna/toml";
+import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { ConfigFormat, TargetSpec } from "../types.js";
 import { ensureDir, exists } from "../utils/fs.js";
 
@@ -56,12 +57,32 @@ export function resolveTargetFormat(target: TargetSpec, filePath: string): Confi
 
 function parseStructuredText(text: string, format: ConfigFormat): unknown {
   if (format === "json") {
-    return JSON.parse(text);
+    return parseJsonWithComments(text);
   }
   if (format === "yaml") {
     return parseYaml(text);
   }
   return parseToml(text);
+}
+
+function formatJsoncErrors(errors: ParseError[]): string {
+  return errors
+    .map((item) => `${printParseErrorCode(item.error)} (offset=${item.offset})`)
+    .join(", ");
+}
+
+function parseJsonWithComments(text: string): unknown {
+  const errors: ParseError[] = [];
+  const parsed = parseJsonc(text, errors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+
+  if (errors.length > 0) {
+    throw new Error(formatJsoncErrors(errors));
+  }
+
+  return parsed;
 }
 
 function stringifyStructuredValue(value: unknown, format: ConfigFormat): string {
@@ -232,6 +253,30 @@ function hashText(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+export function hashStructuredValue(value: unknown): string {
+  return hashText(stableStringify(value));
+}
+
+async function writeStructuredFile(filePath: string, value: unknown, format: ConfigFormat): Promise<void> {
+  await ensureDir(path.dirname(filePath));
+  await writeFile(filePath, stringifyStructuredValue(value, format), "utf8");
+}
+
+export async function hashStructuredFile(filePath: string, format: ConfigFormat): Promise<string> {
+  const parsed = await readStructuredFile(filePath, format);
+  return hashStructuredValue(parsed);
+}
+
+export async function copyStructuredFileNormalized(
+  sourceFilePath: string,
+  destinationFilePath: string,
+  target: TargetSpec
+): Promise<void> {
+  const format = resolveTargetFormat(target, sourceFilePath);
+  const source = await readStructuredFile(sourceFilePath, format);
+  await writeStructuredFile(destinationFilePath, source, format);
+}
+
 export interface SelectorSnapshot {
   exists: boolean;
   hash: string | undefined;
@@ -314,8 +359,7 @@ export async function applyStructuredSelectionFile(
     };
   }
 
-  await ensureDir(path.dirname(destinationFilePath));
-  await writeFile(destinationFilePath, stringifyStructuredValue(current, format), "utf8");
+  await writeStructuredFile(destinationFilePath, current, format);
 
   return {
     applied,

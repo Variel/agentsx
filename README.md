@@ -26,6 +26,7 @@ npx agentsx sync <agent> [targets...] [--conflict fail-all|overwrite|partial] [-
 - JSONPath를 선택한 구조화 설정은 충돌도 JSONPath 단위로 판정되며, TUI에서 `파일#jsonpath` 형태로 표시됩니다.
 - 선택/충돌 결정은 `~/.agentsx/state.json`에 저장되어 재사용됩니다.
 - 원격 기본 브랜치가 비어 있으면 첫 `push/pull/sync` 실행 시 자동 초기화됩니다.
+- `json/yaml/toml`은 동기화 시 파싱 후 다시 저장되어 주석/포맷 노이즈가 제거됩니다.
 
 ## 품질 검증
 ```bash

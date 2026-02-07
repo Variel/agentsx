@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "@iarna/toml";
 import {
   applyStructuredSelectionFile,
+  copyStructuredFileNormalized,
+  hashStructuredFile,
   parseJsonPathRule,
 } from "../src/core/structured-config.js";
 import { parseCliJsonPathSelections } from "../src/core/target-selectors.js";
@@ -12,6 +14,20 @@ import type { TargetSpec } from "../src/types.js";
 
 async function makeTmpDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "agentsx-test-"));
+}
+
+function makeStructuredTarget(filePath: string, format: "json" | "yaml" | "toml"): TargetSpec {
+  return {
+    id: "structured",
+    label: "structured",
+    description: "structured",
+    category: "config",
+    kind: "file",
+    scope: "home",
+    path: filePath,
+    structured: true,
+    format,
+  };
 }
 
 describe("structured config", () => {
@@ -103,6 +119,79 @@ describe("structured config", () => {
     const result = await applyStructuredSelectionFile(src, dst, target, ["$.notFound"]);
     expect(result.applied).toBe(0);
     expect(result.missingSelectors).toEqual(["$.notFound"]);
+  });
+
+  it("jsonc를 정규화 복사할 때 주석과 trailing comma가 제거된다", async () => {
+    const dir = await makeTmpDir();
+    const src = path.join(dir, "src.json");
+    const dst = path.join(dir, "dst.json");
+
+    await writeFile(
+      src,
+      `{
+  // comment
+  "editor": {
+    "tabSize": 2,
+  },
+  "enabled": true,
+}
+`,
+      "utf8"
+    );
+
+    await copyStructuredFileNormalized(src, dst, makeStructuredTarget("settings.json", "json"));
+
+    const afterText = await readFile(dst, "utf8");
+    expect(afterText.includes("//")).toBe(false);
+    expect(afterText.includes("/*")).toBe(false);
+    expect(JSON.parse(afterText)).toEqual({
+      editor: {
+        tabSize: 2,
+      },
+      enabled: true,
+    });
+  });
+
+  it("yaml/toml도 정규화 복사 시 주석이 제거된다", async () => {
+    const dir = await makeTmpDir();
+
+    const yamlSrc = path.join(dir, "src.yaml");
+    const yamlDst = path.join(dir, "dst.yaml");
+    await writeFile(yamlSrc, "# comment\neditor:\n  tabSize: 2\n", "utf8");
+    await copyStructuredFileNormalized(yamlSrc, yamlDst, makeStructuredTarget("settings.yaml", "yaml"));
+    const yamlText = await readFile(yamlDst, "utf8");
+    expect(yamlText.includes("# comment")).toBe(false);
+
+    const tomlSrc = path.join(dir, "src.toml");
+    const tomlDst = path.join(dir, "dst.toml");
+    await writeFile(tomlSrc, '# comment\nname = "alpha"\n[editor]\ntab = 2\n', "utf8");
+    await copyStructuredFileNormalized(tomlSrc, tomlDst, makeStructuredTarget("config.toml", "toml"));
+    const tomlText = await readFile(tomlDst, "utf8");
+    expect(tomlText.includes("# comment")).toBe(false);
+    expect(parseToml(tomlText)).toEqual(parseToml('name = "alpha"\n[editor]\ntab = 2\n'));
+  });
+
+  it("구조화 해시는 주석/포맷 차이를 무시한다", async () => {
+    const dir = await makeTmpDir();
+    const left = path.join(dir, "left.json");
+    const right = path.join(dir, "right.json");
+
+    await writeFile(
+      left,
+      `{
+  // local comment
+  "mcpServers": {
+    "context7": { "enabled": true, },
+  },
+}
+`,
+      "utf8"
+    );
+    await writeFile(right, '{"mcpServers":{"context7":{"enabled":true}}}\n', "utf8");
+
+    const leftHash = await hashStructuredFile(left, "json");
+    const rightHash = await hashStructuredFile(right, "json");
+    expect(leftHash).toBe(rightHash);
   });
 });
 

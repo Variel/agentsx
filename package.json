@@ -1,6 +1,6 @@
 {
   "name": "agentsx",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Cross-machine agent config sync CLI",
   "type": "module",
   "files": [
@@ -33,6 +33,7 @@
     "@inquirer/prompts": "^7.9.0",
     "@optique/core": "^0.9.2",
     "@optique/run": "^0.9.2",
+    "jsonc-parser": "^3.3.1",
     "jsonpath-plus": "^10.3.0",
     "yaml": "^2.8.2"
   },
