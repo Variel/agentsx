@@ -52,9 +52,13 @@ export async function promptPerFileDecision(
   command: SyncCommand,
   conflict: ConflictItem
 ): Promise<PerFileDecision> {
+  const label = conflict.selector
+    ? `${conflict.relPath} (jsonpath: ${conflict.selector})`
+    : conflict.relPath;
+
   if (command === "push" || command === "pull") {
     const result = await select<PerFileDecision>({
-      message: `충돌: ${conflict.relPath}`,
+      message: `충돌: ${label}`,
       choices: [
         { value: "use-source", name: "덮어쓰기" },
         { value: "skip", name: "건너뛰기" },
@@ -64,7 +68,7 @@ export async function promptPerFileDecision(
   }
 
   const result = await select<PerFileDecision>({
-    message: `충돌: ${conflict.relPath}`,
+    message: `충돌: ${label}`,
     choices: [
       { value: "use-local", name: "로컬 버전 사용" },
       { value: "use-remote", name: "원격 버전 사용" },

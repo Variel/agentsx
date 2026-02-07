@@ -1,4 +1,3 @@
-import { select } from "@inquirer/prompts";
 import type { AgentAdapter, SyncCommand, TargetSpec } from "../types.js";
 import { exists } from "../utils/fs.js";
 import { getLocalTargetBase, getRemoteTargetBase } from "./layout.js";
@@ -108,23 +107,6 @@ export async function promptInteractiveJsonPathSelections(
     }
 
     if (!(await exists(sourcePath))) {
-      continue;
-    }
-
-    const mode = await select<"all" | "tree" | "skip">({
-      message: `${target.label}(${target.id}) 동기화 방식 선택`,
-      choices: [
-        { name: "전체 항목 동기화", value: "all" },
-        { name: "트리 탐색으로 세부 경로 선택", value: "tree" },
-        { name: "이 항목 건너뛰기", value: "skip" },
-      ],
-    });
-
-    if (mode === "skip") {
-      continue;
-    }
-
-    if (mode === "all") {
       continue;
     }
 
