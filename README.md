@@ -20,6 +20,7 @@ npx agentsx sync <agent> [targets...] [--conflict fail-all|overwrite|partial]
 
 - `targets`를 생략하면 TUI 선택 UI가 열립니다.
 - 선택/충돌 결정은 `~/.agentsx/state.json`에 저장되어 재사용됩니다.
+- 원격 기본 브랜치가 비어 있으면 첫 `push/pull/sync` 실행 시 자동 초기화됩니다.
 
 ## 품질 검증
 ```bash

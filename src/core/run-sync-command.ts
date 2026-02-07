@@ -1,6 +1,6 @@
 import type { ConflictPolicy, SyncCommand } from "../types.js";
 import { resolveAgentAdapter } from "../agents/registry.js";
-import { pullLatest, stageAll, hasStagedChanges, commitAndPush } from "./git.js";
+import { prepareRemoteBranch, stageAll, hasStagedChanges, commitAndPush } from "./git.js";
 import { conflictDefaultKey, saveState } from "./state.js";
 import { selectTargets } from "./targets.js";
 import { executeSyncEngine } from "./sync-engine.js";
@@ -23,7 +23,12 @@ export async function runSyncCommand(
   const adapter = resolveAgentAdapter(agentInput);
   const { state, remote } = await requireRemote();
 
-  pullLatest(remote.mirrorPath, remote.defaultBranch);
+  const remoteStatus = prepareRemoteBranch(remote.mirrorPath, remote.defaultBranch);
+  if (remoteStatus === "initialized") {
+    console.log(
+      `원격 브랜치 origin/${remote.defaultBranch}가 없어 자동 초기화했습니다.`
+    );
+  }
 
   const selection = await selectTargets(adapter, targetIds);
   if (selection.targets.length === 0) {
