@@ -31,6 +31,7 @@ export async function scanTargetSide(
       {
         targetId,
         relPath: path.basename(basePath),
+        selector: undefined,
         snapshot: await toSnapshot(basePath, fileStat.mtimeMs),
       },
     ];
@@ -42,6 +43,7 @@ export async function scanTargetSide(
     entries.push({
       targetId,
       relPath: file.relPath,
+      selector: undefined,
       snapshot: await toSnapshot(file.absPath, file.mtimeMs),
     });
   }

@@ -21,6 +21,7 @@ export function mergeEntries(local: SideEntry[], remote: SideEntry[]): SyncEntry
       key,
       targetId: entry.targetId,
       relPath: entry.relPath,
+      selector: entry.selector,
       local: entry.snapshot,
       remote: map.get(key)?.remote,
     });
@@ -33,6 +34,7 @@ export function mergeEntries(local: SideEntry[], remote: SideEntry[]): SyncEntry
       key,
       targetId: entry.targetId,
       relPath: entry.relPath,
+      selector: entry.selector ?? prev?.selector,
       local: prev?.local,
       remote: entry.snapshot,
     });
@@ -60,6 +62,7 @@ function addConflict(conflicts: ConflictItem[], entry: SyncEntry): void {
     key: entry.key,
     targetId: entry.targetId,
     relPath: entry.relPath,
+    selector: entry.selector,
     local: entry.local,
     remote: entry.remote,
   });
@@ -86,6 +89,7 @@ function pushLikePlan(
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: command === "push" ? "copy-local-to-remote" : "copy-remote-to-local",
         reason: "new",
       });
@@ -97,6 +101,7 @@ function pushLikePlan(
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: "skip",
         reason: "same",
       });
@@ -110,6 +115,7 @@ function pushLikePlan(
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: command === "push" ? "copy-local-to-remote" : "copy-remote-to-local",
         reason: "overwrite",
       });
@@ -118,6 +124,7 @@ function pushLikePlan(
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: "skip",
         reason: "conflict-skip",
       });
@@ -141,6 +148,7 @@ function syncPlan(entries: SyncEntry[], policy: ConflictPolicy): PlanResult {
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: "copy-local-to-remote",
         reason: "new",
       });
@@ -152,6 +160,7 @@ function syncPlan(entries: SyncEntry[], policy: ConflictPolicy): PlanResult {
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: "copy-remote-to-local",
         reason: "new",
       });
@@ -167,6 +176,7 @@ function syncPlan(entries: SyncEntry[], policy: ConflictPolicy): PlanResult {
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: "skip",
         reason: "same",
       });
@@ -180,6 +190,7 @@ function syncPlan(entries: SyncEntry[], policy: ConflictPolicy): PlanResult {
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: chooseSyncDirection(entry),
         reason: "overwrite",
       });
@@ -188,6 +199,7 @@ function syncPlan(entries: SyncEntry[], policy: ConflictPolicy): PlanResult {
         key: entry.key,
         targetId: entry.targetId,
         relPath: entry.relPath,
+        selector: entry.selector,
         action: "skip",
         reason: "conflict-skip",
       });

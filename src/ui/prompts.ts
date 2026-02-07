@@ -13,9 +13,9 @@ export async function promptSelectTargets(
   targets: TargetSpec[]
 ): Promise<string[]> {
   const selected = await checkbox({
-    message: `${adapter.displayName} 동기화 대상을 선택하세요. (↑/↓ 이동, Space 선택, Enter 확정)`,
+    message: `${adapter.displayName}에서 동기화할 설정 항목을 선택하세요. (↑/↓ 이동, Space 선택, Enter 확정)`,
     choices: targets.map((target) => ({
-      name: `${target.id} - ${target.description}${target.sensitive ? " [민감]" : ""}`,
+      name: `${target.label} [${target.category}] - ${target.description}${target.sensitive ? " [민감]" : ""}`,
       value: target.id,
       checked: target.includeByDefault ?? !target.sensitive,
     })),

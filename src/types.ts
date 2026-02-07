@@ -9,6 +9,7 @@ export type PerFileDecision = "use-source" | "use-local" | "use-remote" | "skip"
 export type TargetKind = "file" | "dir";
 
 export type TargetScope = "home" | "cwd";
+export type ConfigFormat = "json" | "yaml" | "toml";
 
 export type PlatformPath =
   | string
@@ -30,6 +31,8 @@ export interface TargetSpec {
   optional?: boolean;
   sensitive?: boolean;
   includeByDefault?: boolean;
+  structured?: boolean;
+  format?: ConfigFormat;
 }
 
 export interface AgentAdapter {
@@ -63,6 +66,7 @@ export interface FileSnapshot {
 export interface SideEntry {
   targetId: string;
   relPath: string;
+  selector: string | undefined;
   snapshot: FileSnapshot;
 }
 
@@ -70,6 +74,7 @@ export interface SyncEntry {
   key: string;
   targetId: string;
   relPath: string;
+  selector: string | undefined;
   local: FileSnapshot | undefined;
   remote: FileSnapshot | undefined;
 }
@@ -78,6 +83,7 @@ export interface PlannedOp {
   key: string;
   targetId: string;
   relPath: string;
+  selector: string | undefined;
   action: "copy-local-to-remote" | "copy-remote-to-local" | "skip";
   reason: "new" | "overwrite" | "same" | "conflict-skip";
 }
@@ -86,6 +92,7 @@ export interface ConflictItem {
   key: string;
   targetId: string;
   relPath: string;
+  selector: string | undefined;
   local: FileSnapshot | undefined;
   remote: FileSnapshot | undefined;
 }

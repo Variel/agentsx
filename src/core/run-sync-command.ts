@@ -5,6 +5,11 @@ import { conflictDefaultKey, saveState } from "./state.js";
 import { selectTargets } from "./targets.js";
 import { executeSyncEngine } from "./sync-engine.js";
 import { requireRemote } from "./remote.js";
+import {
+  combineJsonPathSelections,
+  parseCliJsonPathSelections,
+  promptInteractiveJsonPathSelections,
+} from "./target-selectors.js";
 
 function timestampIso(): string {
   return new Date().toISOString();
@@ -18,7 +23,8 @@ export async function runSyncCommand(
   command: SyncCommand,
   agentInput: string,
   targetIds: string[],
-  conflictPolicy?: ConflictPolicy
+  conflictPolicy?: ConflictPolicy,
+  jsonPathRules: string[] = []
 ): Promise<void> {
   const adapter = resolveAgentAdapter(agentInput);
   const { state, remote } = await requireRemote();
@@ -35,7 +41,29 @@ export async function runSyncCommand(
     throw new Error("동기화할 대상을 최소 1개 이상 선택해야 합니다.");
   }
 
-  const conflictKey = conflictDefaultKey(command, adapter.key, selection.targets.map((target) => target.id));
+  const cliJsonPathSelections = parseCliJsonPathSelections(selection.targets, jsonPathRules);
+  const interactiveJsonPathSelections = selection.interactive
+    ? await promptInteractiveJsonPathSelections(
+      command,
+      adapter,
+      selection.targets,
+      process.cwd(),
+      remote.mirrorPath
+    )
+    : {};
+  const jsonPathSelectionsByTarget = combineJsonPathSelections(
+    cliJsonPathSelections,
+    interactiveJsonPathSelections
+  );
+
+  const selectionFingerprint = selection.targets.map((target) => {
+    const selectors = jsonPathSelectionsByTarget[target.id];
+    if (!selectors || selectors.length === 0) {
+      return `${target.id}:*`;
+    }
+    return `${target.id}:${selectors.slice().sort().join("&")}`;
+  });
+  const conflictKey = conflictDefaultKey(command, adapter.key, selectionFingerprint);
 
   const summary = await executeSyncEngine({
     command,
@@ -47,6 +75,7 @@ export async function runSyncCommand(
     conflictStateKey: conflictKey,
     interactiveTargets: selection.interactive,
     explicitPolicy: conflictPolicy,
+    jsonPathSelectionsByTarget,
   });
 
   state.lastSyncAtByAgent[adapter.key] = new Date().toISOString();
@@ -68,6 +97,9 @@ export async function runSyncCommand(
     `복사(remote->local): ${summary.copiedRemoteToLocal}`,
     `건너뜀: ${summary.skipped}`,
     summary.policy ? `충돌정책: ${summary.policy}` : undefined,
+    Object.keys(jsonPathSelectionsByTarget).length > 0
+      ? `세부선택(jsonpath): ${JSON.stringify(jsonPathSelectionsByTarget)}`
+      : undefined,
     adapter.references.length > 0 ? `참고 문서: ${adapter.references.join(", ")}` : undefined,
   ].filter(Boolean).join("\n"));
 }

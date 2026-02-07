@@ -7,6 +7,7 @@ function entry(partial: Partial<SyncEntry> & { key: string; targetId: string; re
     key: partial.key,
     targetId: partial.targetId,
     relPath: partial.relPath,
+    selector: partial.selector,
     local: partial.local,
     remote: partial.remote,
   };
@@ -108,5 +109,26 @@ describe("planner", () => {
     expect(plan.conflicts).toHaveLength(1);
     expect(plan.ops[0]?.action).toBe("skip");
     expect(plan.ops[0]?.reason).toBe("conflict-skip");
+  });
+
+  it("jsonpath selector 충돌은 selector 단위로 기록된다", () => {
+    const plan = buildPlan(
+      [
+        entry({
+          key: "preferences:settings.json#$.editor.theme",
+          targetId: "preferences",
+          relPath: "settings.json#$.editor.theme",
+          selector: "$.editor.theme",
+          local: { absPath: "/local/settings.json", hash: "L", mtimeMs: 100 },
+          remote: { absPath: "/remote/settings.json", hash: "R", mtimeMs: 110 },
+        }),
+      ],
+      "sync",
+      "partial"
+    );
+
+    expect(plan.conflicts).toHaveLength(1);
+    expect(plan.conflicts[0]?.selector).toBe("$.editor.theme");
+    expect(plan.conflicts[0]?.relPath).toContain("#$.editor.theme");
   });
 });

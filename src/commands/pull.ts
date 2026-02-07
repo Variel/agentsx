@@ -4,7 +4,8 @@ import { runSyncCommand } from "../core/run-sync-command.js";
 export async function runPull(
   agent: string,
   targets: string[],
-  conflictPolicy?: ConflictPolicy
+  conflictPolicy?: ConflictPolicy,
+  jsonPathRules: string[] = []
 ): Promise<void> {
-  await runSyncCommand("pull", agent, targets, conflictPolicy);
+  await runSyncCommand("pull", agent, targets, conflictPolicy, jsonPathRules);
 }

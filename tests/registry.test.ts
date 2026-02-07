@@ -16,4 +16,12 @@ describe("agent registry", () => {
   it("미지원 에이전트는 오류", () => {
     expect(() => resolveAgentAdapter("unknown-agent")).toThrowError("지원하지 않는 에이전트");
   });
+
+  it("동기화 대상은 프로젝트(cwd) 범위를 포함하지 않는다", () => {
+    for (const adapter of listSupportedAgents()) {
+      for (const target of adapter.targets) {
+        expect(target.scope).toBe("home");
+      }
+    }
+  });
 });

@@ -20,6 +20,8 @@ export const codexAdapter: AgentAdapter = {
       scope: "home",
       path: ".codex/config.toml",
       includeByDefault: true,
+      structured: true,
+      format: "toml",
     },
     {
       id: "instructions-main",

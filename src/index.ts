@@ -35,6 +35,7 @@ const pushCommand = command("push", object({
   agent: argument(string({ metavar: "AGENT" })),
   targets: multiple(argument(string({ metavar: "TARGET" }))),
   conflict: optional(option("--conflict", conflictPolicyParser)),
+  jsonpath: multiple(option("--jsonpath", string({ metavar: "TARGET_ID=$.PATH" }))),
 }));
 
 const pullCommand = command("pull", object({
@@ -42,6 +43,7 @@ const pullCommand = command("pull", object({
   agent: argument(string({ metavar: "AGENT" })),
   targets: multiple(argument(string({ metavar: "TARGET" }))),
   conflict: optional(option("--conflict", conflictPolicyParser)),
+  jsonpath: multiple(option("--jsonpath", string({ metavar: "TARGET_ID=$.PATH" }))),
 }));
 
 const syncCommand = command("sync", object({
@@ -49,6 +51,7 @@ const syncCommand = command("sync", object({
   agent: argument(string({ metavar: "AGENT" })),
   targets: multiple(argument(string({ metavar: "TARGET" }))),
   conflict: optional(option("--conflict", conflictPolicyParser)),
+  jsonpath: multiple(option("--jsonpath", string({ metavar: "TARGET_ID=$.PATH" }))),
 }));
 
 const parser = or(
@@ -66,7 +69,7 @@ async function main(): Promise<void> {
       programName: "agentsx",
       help: "both",
       version: {
-        value: "0.1.0",
+        value: "0.1.1",
         mode: "option",
       },
     });
@@ -93,7 +96,8 @@ async function main(): Promise<void> {
       await runPush(
         result.agent,
         [...result.targets],
-        result.conflict
+        result.conflict,
+        [...result.jsonpath].filter((item): item is string => typeof item === "string" && item.length > 0)
       );
       return;
     }
@@ -102,7 +106,8 @@ async function main(): Promise<void> {
       await runPull(
         result.agent,
         [...result.targets],
-        result.conflict
+        result.conflict,
+        [...result.jsonpath].filter((item): item is string => typeof item === "string" && item.length > 0)
       );
       return;
     }
@@ -111,7 +116,8 @@ async function main(): Promise<void> {
       await runSync(
         result.agent,
         [...result.targets],
-        result.conflict
+        result.conflict,
+        [...result.jsonpath].filter((item): item is string => typeof item === "string" && item.length > 0)
       );
     }
   } catch (error: unknown) {
