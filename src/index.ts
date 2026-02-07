@@ -69,7 +69,7 @@ async function main(): Promise<void> {
       programName: "agentsx",
       help: "both",
       version: {
-        value: "0.1.8",
+        value: "0.1.9",
         mode: "option",
       },
     });
