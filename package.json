@@ -1,6 +1,6 @@
 {
   "name": "agentsx",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Cross-machine agent config sync CLI",
   "type": "module",
   "files": [

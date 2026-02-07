@@ -422,7 +422,14 @@ export async function promptCombinedTargetAndJsonTreeSelection(
 
     const cleanup = (): void => {
       input.off("keypress", onKeypress);
-      input.setRawMode(false);
+      try {
+        if (typeof input.setRawMode === "function") {
+          input.setRawMode(false);
+        }
+      } catch {
+        // Ignore raw mode reset failures during teardown.
+      }
+      input.pause();
       output.write("\x1B[?25h");
       output.write("\n");
     };

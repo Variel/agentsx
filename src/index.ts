@@ -69,7 +69,7 @@ async function main(): Promise<void> {
       programName: "agentsx",
       help: "both",
       version: {
-        value: "0.1.3",
+        value: "0.1.7",
         mode: "option",
       },
     });
@@ -124,6 +124,15 @@ async function main(): Promise<void> {
     const message = error instanceof Error ? error.message : "알 수 없는 오류";
     console.error(`오류: ${message}`);
     process.exitCode = 1;
+  } finally {
+    try {
+      if (typeof process.stdin.setRawMode === "function") {
+        process.stdin.setRawMode(false);
+      }
+    } catch {
+      // Ignore raw mode reset failures during process teardown.
+    }
+    process.stdin.pause();
   }
 }
 
