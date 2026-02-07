@@ -3,16 +3,27 @@
   "version": "0.1.0",
   "description": "Cross-machine agent config sync CLI",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "REQUIREMENTS.md",
+    "AGENTS.md",
+    "AGENT_PATHS.md"
+  ],
   "bin": {
     "agentsx": "dist/index.js"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm lint && pnpm test"
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "prepublishOnly": "pnpm check && pnpm build"
   },
   "engines": {
     "node": ">=20.10.0"
