@@ -8,7 +8,7 @@ import { requireRemote } from "./remote.js";
 import {
   combineJsonPathSelections,
   parseCliJsonPathSelections,
-  promptInteractiveJsonPathSelections,
+  promptInteractiveCombinedSelection,
 } from "./target-selectors.js";
 
 function timestampIso(): string {
@@ -28,6 +28,7 @@ export async function runSyncCommand(
 ): Promise<void> {
   const adapter = resolveAgentAdapter(agentInput);
   const { state, remote } = await requireRemote();
+  const cwd = process.cwd();
 
   const remoteStatus = prepareRemoteBranch(remote.mirrorPath, remote.defaultBranch);
   if (remoteStatus === "initialized") {
@@ -36,27 +37,40 @@ export async function runSyncCommand(
     );
   }
 
-  const selection = await selectTargets(adapter, targetIds);
-  if (selection.targets.length === 0) {
+  const requestedTargets = targetIds.map((item) => item.trim()).filter(Boolean);
+
+  let selectedTargets = [] as typeof adapter.targets;
+  let interactiveTargets = false;
+  let interactiveJsonPathSelections: Record<string, string[]> = {};
+
+  if (requestedTargets.length === 0) {
+    const interactiveSelection = await promptInteractiveCombinedSelection(
+      command,
+      adapter,
+      adapter.targets,
+      cwd,
+      remote.mirrorPath
+    );
+    selectedTargets = interactiveSelection.selectedTargets;
+    interactiveTargets = true;
+    interactiveJsonPathSelections = interactiveSelection.jsonPathSelectionsByTarget;
+  } else {
+    const selection = await selectTargets(adapter, requestedTargets);
+    selectedTargets = selection.targets;
+    interactiveTargets = selection.interactive;
+  }
+
+  if (selectedTargets.length === 0) {
     throw new Error("동기화할 대상을 최소 1개 이상 선택해야 합니다.");
   }
 
-  const cliJsonPathSelections = parseCliJsonPathSelections(selection.targets, jsonPathRules);
-  const interactiveJsonPathSelections = selection.interactive
-    ? await promptInteractiveJsonPathSelections(
-      command,
-      adapter,
-      selection.targets,
-      process.cwd(),
-      remote.mirrorPath
-    )
-    : {};
+  const cliJsonPathSelections = parseCliJsonPathSelections(selectedTargets, jsonPathRules);
   const jsonPathSelectionsByTarget = combineJsonPathSelections(
     cliJsonPathSelections,
     interactiveJsonPathSelections
   );
 
-  const selectionFingerprint = selection.targets.map((target) => {
+  const selectionFingerprint = selectedTargets.map((target) => {
     const selectors = jsonPathSelectionsByTarget[target.id];
     if (!selectors || selectors.length === 0) {
       return `${target.id}:*`;
@@ -68,12 +82,12 @@ export async function runSyncCommand(
   const summary = await executeSyncEngine({
     command,
     adapter,
-    targets: selection.targets,
-    cwd: process.cwd(),
+    targets: selectedTargets,
+    cwd,
     mirrorPath: remote.mirrorPath,
     state,
     conflictStateKey: conflictKey,
-    interactiveTargets: selection.interactive,
+    interactiveTargets,
     explicitPolicy: conflictPolicy,
     jsonPathSelectionsByTarget,
   });

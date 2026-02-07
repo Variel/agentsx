@@ -1,12 +1,17 @@
+import path from "node:path";
 import type { AgentAdapter, SyncCommand, TargetSpec } from "../types.js";
 import { exists } from "../utils/fs.js";
 import { getLocalTargetBase, getRemoteTargetBase } from "./layout.js";
 import {
   isStructuredConfigTarget,
   parseJsonPathRule,
+  readStructuredFile,
   resolveTargetFormat,
 } from "./structured-config.js";
-import { promptTreeJsonPathSelection } from "../ui/structured-tree.js";
+import {
+  promptCombinedTargetAndJsonTreeSelection,
+  type CombinedTreeTargetInput,
+} from "../ui/structured-tree.js";
 
 function ensureSelectedTargetMap(targets: TargetSpec[]): Map<string, TargetSpec> {
   return new Map(targets.map((target) => [target.id, target]));
@@ -61,7 +66,7 @@ function mergeSelections(
   return merged;
 }
 
-function resolveSourcePathForTree(
+function resolveSourceForTarget(
   command: SyncCommand,
   adapter: AgentAdapter,
   target: TargetSpec,
@@ -77,52 +82,71 @@ function resolveSourcePathForTree(
   if (command === "pull") {
     return { path: remotePath, sourceKind: "remote" };
   }
+
   return { path: localPath, sourceKind: "local" };
 }
 
-export async function promptInteractiveJsonPathSelections(
+export interface InteractiveSelectionResult {
+  selectedTargets: TargetSpec[];
+  jsonPathSelectionsByTarget: Record<string, string[]>;
+}
+
+export async function promptInteractiveCombinedSelection(
   command: SyncCommand,
   adapter: AgentAdapter,
   targets: TargetSpec[],
   cwd: string,
   mirrorPath: string
-): Promise<Record<string, string[]>> {
-  const selected: Record<string, string[]> = {};
+): Promise<InteractiveSelectionResult> {
+  const inputs: CombinedTreeTargetInput[] = [];
 
   for (const target of targets) {
-    if (!isStructuredConfigTarget(target)) {
-      continue;
-    }
-
-    const source = resolveSourcePathForTree(command, adapter, target, cwd, mirrorPath);
-    let sourcePath = source.path;
-    let sourceKind = source.sourceKind;
+    const preferred = resolveSourceForTarget(command, adapter, target, cwd, mirrorPath);
+    let sourcePath = preferred.path;
+    let sourceKind = preferred.sourceKind;
 
     if (command === "sync" && !(await exists(sourcePath))) {
-      const remotePath = getRemoteTargetBase(mirrorPath, adapter, target);
-      if (await exists(remotePath)) {
-        sourcePath = remotePath;
+      const fallbackRemote = getRemoteTargetBase(mirrorPath, adapter, target);
+      if (await exists(fallbackRemote)) {
+        sourcePath = fallbackRemote;
         sourceKind = "remote";
       }
     }
 
-    if (!(await exists(sourcePath))) {
-      continue;
+    let rootValue: unknown = undefined;
+    if (target.kind === "file" && isStructuredConfigTarget(target) && await exists(sourcePath)) {
+      const format = resolveTargetFormat(target, sourcePath);
+      rootValue = await readStructuredFile(sourcePath, format);
     }
 
-    const format = resolveTargetFormat(target, sourcePath);
-    const expressions = await promptTreeJsonPathSelection(
+    inputs.push({
+      targetId: target.id,
+      label: target.label,
+      description: `${target.description} (${path.basename(sourcePath)})`,
+      sourceKind,
       sourcePath,
-      format,
-      `${target.label} / source=${sourceKind}`
-    );
+      rootValue,
+    });
+  }
 
-    if (expressions.length > 0) {
-      selected[target.id] = expressions;
+  const selection = await promptCombinedTargetAndJsonTreeSelection(
+    `? ${adapter.displayName}에서 동기화할 설정 항목을 선택하세요.`,
+    inputs
+  );
+
+  const byId = ensureSelectedTargetMap(targets);
+  const selectedTargets: TargetSpec[] = [];
+  for (const targetId of selection.selectedTargetIds) {
+    const target = byId.get(targetId);
+    if (target) {
+      selectedTargets.push(target);
     }
   }
 
-  return selected;
+  return {
+    selectedTargets,
+    jsonPathSelectionsByTarget: selection.jsonPathSelectionsByTarget,
+  };
 }
 
 export function combineJsonPathSelections(
