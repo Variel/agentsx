@@ -1,4 +1,3 @@
-import path from "node:path";
 import readline from "node:readline";
 
 export interface CombinedTreeTargetInput {
@@ -32,11 +31,8 @@ interface TreeNode {
 }
 
 function nodeSummary(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `array(${value.length})`;
-  }
-  if (value && typeof value === "object") {
-    return `object(${Object.keys(value as Record<string, unknown>).length})`;
+  if (Array.isArray(value) || (value && typeof value === "object")) {
+    return "";
   }
   const text = JSON.stringify(value);
   if (!text) {
@@ -70,7 +66,23 @@ function childEntries(value: unknown): Array<{ key: string | number; value: unkn
   }
 
   if (value && typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>).map(([key, item]) => ({ key, value: item }));
+    const entries = Object.entries(value as Record<string, unknown>).map(([key, item]) => ({ key, value: item }));
+    const rank = (item: unknown): number => {
+      if (Array.isArray(item)) {
+        return 2;
+      }
+      if (item && typeof item === "object") {
+        return 1;
+      }
+      return 0;
+    };
+    return entries.sort((a, b) => {
+      const rankDiff = rank(a.value) - rank(b.value);
+      if (rankDiff !== 0) {
+        return rankDiff;
+      }
+      return a.key.localeCompare(b.key);
+    });
   }
 
   return [];
@@ -142,7 +154,7 @@ function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, Tree
       label: input.label,
       jsonPath: undefined,
       subpath: undefined,
-      value: `${input.description} / source=${input.sourceKind}`,
+      value: `source=${input.sourceKind}`,
     });
 
     if (input.defaultSelected) {
@@ -150,17 +162,8 @@ function buildTree(inputs: CombinedTreeTargetInput[]): { nodes: Map<string, Tree
     }
 
     if (input.rootValue !== undefined) {
-      const fileNodeId = createNode({
-        parentId: targetNodeId,
-        kind: "json",
-        targetId: input.targetId,
-        label: path.basename(input.sourcePath),
-        jsonPath: "$",
-        subpath: undefined,
-        value: input.rootValue,
-      });
       addJsonChildren(
-        fileNodeId,
+        targetNodeId,
         input.targetId,
         input.rootValue,
         [],
@@ -284,6 +287,8 @@ function render(
   readline.clearScreenDown(process.stdout);
 
   const lines: string[] = [title];
+  lines.push("←/→ 접기/펼치기, ↑/↓ 이동, Space 선택(하위 포함), Enter 확정");
+  lines.push("");
 
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i];
@@ -304,9 +309,10 @@ function render(
 
     let detail = "";
     if (node.kind === "target") {
-      detail = typeof node.value === "string" ? ` - ${node.value}` : "";
+      detail = typeof node.value === "string" ? ` / ${node.value}` : "";
     } else if (node.kind === "json") {
-      detail = `: ${nodeSummary(node.value)}`;
+      const summary = nodeSummary(node.value);
+      detail = summary ? `: ${summary}` : "";
     }
 
     lines.push(`${focus}${indent}${branch} ${marker} ${node.label}${detail}`);
@@ -399,7 +405,12 @@ export async function promptCombinedTargetAndJsonTreeSelection(
   const expanded = new Set<string>([rootId]);
   let rows = visibleRows(rootId, nodes, expanded).filter((row) => row.id !== rootId);
   let focusIndex = 0;
-  const selected = new Set<string>(defaultSelectedNodeIds);
+  const selected = new Set<string>();
+  for (const nodeId of defaultSelectedNodeIds) {
+    for (const descendant of descendants(nodeId, nodes)) {
+      selected.add(descendant);
+    }
+  }
 
   return await new Promise<CombinedTreeSelection>((resolve, reject) => {
     const input = process.stdin;

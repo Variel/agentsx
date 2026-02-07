@@ -1,4 +1,3 @@
-import path from "node:path";
 import { readdir } from "node:fs/promises";
 import type { AgentAdapter, SyncCommand, TargetSpec } from "../types.js";
 import { exists } from "../utils/fs.js";
@@ -154,7 +153,7 @@ export async function promptInteractiveCombinedSelection(
     const treeInput: CombinedTreeTargetInput = {
       targetId: target.id,
       label: target.label,
-      description: `${target.description} (${path.basename(sourcePath)})`,
+      description: target.description,
       sourceKind,
       sourcePath,
       rootValue,
@@ -168,7 +167,7 @@ export async function promptInteractiveCombinedSelection(
   }
 
   const selection = await promptCombinedTargetAndJsonTreeSelection(
-    `? ${adapter.displayName}에서 동기화할 설정 항목을 선택하세요. (↑/↓ 이동, Space 선택, Enter 확정)`,
+    `? ${adapter.displayName}에서 동기화할 설정 항목을 선택하세요.`,
     inputs
   );
 
